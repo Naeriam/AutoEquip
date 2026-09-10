@@ -6,7 +6,7 @@ Perfect for alternative characters and events such as Remix, where you go withou
 You can download this addon from: https://www.curseforge.com/wow/addons/auto-equip
 
 ## Considerations
-- It never equips weapons
+- It never equips weapons or trinkets
 - Only equips **soulbound** items
 - It respects your class armor type
 - Disabled during combat

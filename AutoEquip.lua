@@ -100,6 +100,10 @@ local function TryEquipItem(bag, slot)
     -- NEVER equip weapons
     ---------------------------------------------------
     if classID == ITEM_CLASS_WEAPON then return end
+    ---------------------------------------------------
+    -- NEVER equip trinkets
+    ---------------------------------------------------
+    if equipLoc == "INVTYPE_TRINKET" then return end
 
     ---------------------------------------------------
     -- Armor type enforcement (ONLY real armor slots)
