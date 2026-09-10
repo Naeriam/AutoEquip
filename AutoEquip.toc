@@ -2,7 +2,7 @@
 ## Interface: 120100
 ## Title: Auto |cFF8B008BEquip|r
 ## Author: Velhari-LosErrantes EU
-## Version: 0.1
+## Version: 0.2
 ## IconTexture: Interface\Icons\inv_misc_curiouscoin
 ## Notes: Auto-equip items with higher item level
 

@@ -9,5 +9,6 @@ You can download this addon from: https://www.curseforge.com/wow/addons/auto-equ
 - It never equips weapons or trinkets
 - Only equips **soulbound** items
 - It respects your class armor type
+- Never wears a duplicate of **unique-equipped** items (e.g. event rings), which prevents the two ring slots from endlessly swapping
 - Disabled during combat
 - Disabled while the bank is open

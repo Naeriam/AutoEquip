@@ -19,6 +19,7 @@ local ITEM_CLASS_ARMOR  = 4
 local GetContainerItemLink = C_Container.GetContainerItemLink
 local GetContainerNumSlots = C_Container.GetContainerNumSlots
 local UseContainerItem    = C_Container.UseContainerItem
+local GetItemUniqueness   = C_Item.GetItemUniqueness
 
 -------------------------------------------------------
 -- Armor type per class
@@ -50,6 +51,14 @@ local INVTYPE_TO_SLOT = {
 local _, playerClass = UnitClass("player")
 local REQUIRED_ARMOR = CLASS_ARMOR_ID[playerClass]
 
+---------------------------------------------------
+-- Equip location → the two inventory slots (two slot types: finger/trinket)
+---------------------------------------------------
+local TWO_SLOT_INVTYPES = {
+    INVTYPE_FINGER  = { INVSLOT_FINGER1, INVSLOT_FINGER2 },
+    INVTYPE_TRINKET = { INVSLOT_TRINKET1, INVSLOT_TRINKET2 },
+}
+
 -------------------------------------------------------
 -- Helpers
 -------------------------------------------------------
@@ -60,6 +69,14 @@ local function GetEquippedItemInfo(invSlot)
     end
     return C_Item.GetCurrentItemLevel(loc) or 0,
            GetInventoryItemLink("player", invSlot)
+end
+
+local function GetEquippedItemID(invSlot)
+    local loc = ItemLocation:CreateFromEquipmentSlot(invSlot)
+    if not loc or not C_Item.DoesItemExist(loc) then
+        return nil
+    end
+    return C_Item.GetItemID(loc)
 end
 
 local function GetWorstOfTwo(slot1, slot2)
@@ -134,13 +151,31 @@ local function TryEquipItem(bag, slot)
     ---------------------------------------------------
     local targetInvSlot, equippedIlvl, replacedLink
 
-    if equipLoc == "INVTYPE_FINGER" then
+    local pair = TWO_SLOT_INVTYPES[equipLoc]
+    if pair then
         targetInvSlot, equippedIlvl, replacedLink =
-            GetWorstOfTwo(INVSLOT_FINGER1, INVSLOT_FINGER2)
+            GetWorstOfTwo(pair[1], pair[2])
 
-    elseif equipLoc == "INVTYPE_TRINKET" then
-        targetInvSlot, equippedIlvl, replacedLink =
-            GetWorstOfTwo(INVSLOT_TRINKET1, INVSLOT_TRINKET2)
+        -- Unique / unique-equipped items (e.g. many event rings) can only be
+        -- worn once. If a copy is already equipped, retarget the equip to
+        -- that exact slot (upgrade in place). Equipping into the OTHER slot
+        -- would make WoW un-equip the worn copy instead, so the two-slot
+        -- logic would end up swapping the rings back and forth forever.
+        if GetItemUniqueness then
+            local _, limitMax = GetItemUniqueness(itemID)
+            if limitMax == 1 then
+                local worn
+                if GetEquippedItemID(pair[1]) == itemID then
+                    worn = pair[1]
+                elseif GetEquippedItemID(pair[2]) == itemID then
+                    worn = pair[2]
+                end
+                if worn and targetInvSlot ~= worn then
+                    targetInvSlot = worn
+                    equippedIlvl, replacedLink = GetEquippedItemInfo(worn)
+                end
+            end
+        end
 
     else
         local slotName = INVTYPE_TO_SLOT[equipLoc]
