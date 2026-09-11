@@ -79,6 +79,13 @@ local function GetEquippedItemID(invSlot)
     return C_Item.GetItemID(loc)
 end
 
+-- Returns the item's unique-equip limit category (nil if it has none).
+local function GetEquippedItemLimitCategory(invSlot)
+    local id = GetEquippedItemID(invSlot)
+    if not id or not GetItemUniqueness then return nil end
+    return GetItemUniqueness(id)
+end
+
 local function GetWorstOfTwo(slot1, slot2)
     local ilvl1, link1 = GetEquippedItemInfo(slot1)
     local ilvl2, link2 = GetEquippedItemInfo(slot2)
@@ -156,18 +163,21 @@ local function TryEquipItem(bag, slot)
         targetInvSlot, equippedIlvl, replacedLink =
             GetWorstOfTwo(pair[1], pair[2])
 
-        -- Unique / unique-equipped items (e.g. many event rings) can only be
-        -- worn once. If a copy is already equipped, retarget the equip to
-        -- that exact slot (upgrade in place). Equipping into the OTHER slot
-        -- would make WoW un-equip the worn copy instead, so the two-slot
-        -- logic would end up swapping the rings back and forth forever.
+        -- Unique-equipped items (e.g. many event rings) can only be worn
+        -- once, even across the two ring slots, and even when different
+        -- copies use different itemIDs that share the same limit category
+        -- (common for satchel/leveling rewards with the same name). If a
+        -- member of that family is already equipped, retarget the equip to
+        -- that exact slot (upgrade in place) instead of the other slot -
+        -- equipping into the other slot would make WoW un-equip the worn
+        -- copy instead, so the two-slot logic would swap forever.
         if GetItemUniqueness then
-            local _, limitMax = GetItemUniqueness(itemID)
-            if limitMax == 1 then
+            local limitCategory, limitMax = GetItemUniqueness(itemID)
+            if limitCategory and limitMax == 1 then
                 local worn
-                if GetEquippedItemID(pair[1]) == itemID then
+                if GetEquippedItemLimitCategory(pair[1]) == limitCategory then
                     worn = pair[1]
-                elseif GetEquippedItemID(pair[2]) == itemID then
+                elseif GetEquippedItemLimitCategory(pair[2]) == limitCategory then
                     worn = pair[2]
                 end
                 if worn and targetInvSlot ~= worn then
