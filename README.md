@@ -6,9 +6,8 @@ Perfect for alternative characters and events such as Remix, where you go withou
 You can download this addon from: https://www.curseforge.com/wow/addons/auto-equip
 
 ## Considerations
-- It never equips weapons or trinkets
+- It never equips weapons, trinkets, or rings
 - Only equips **soulbound** items
 - It respects your class armor type
-- Never wears a duplicate of **unique-equipped** items (e.g. event rings), which prevents the two ring slots from endlessly swapping
 - Disabled during combat
 - Disabled while the bank is open

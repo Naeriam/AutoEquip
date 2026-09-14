@@ -19,7 +19,6 @@ local ITEM_CLASS_ARMOR  = 4
 local GetContainerItemLink = C_Container.GetContainerItemLink
 local GetContainerNumSlots = C_Container.GetContainerNumSlots
 local UseContainerItem    = C_Container.UseContainerItem
-local GetItemUniqueness   = C_Item.GetItemUniqueness
 
 -------------------------------------------------------
 -- Armor type per class
@@ -51,14 +50,6 @@ local INVTYPE_TO_SLOT = {
 local _, playerClass = UnitClass("player")
 local REQUIRED_ARMOR = CLASS_ARMOR_ID[playerClass]
 
----------------------------------------------------
--- Equip location → the two inventory slots (two slot types: finger/trinket)
----------------------------------------------------
-local TWO_SLOT_INVTYPES = {
-    INVTYPE_FINGER  = { INVSLOT_FINGER1, INVSLOT_FINGER2 },
-    INVTYPE_TRINKET = { INVSLOT_TRINKET1, INVSLOT_TRINKET2 },
-}
-
 -------------------------------------------------------
 -- Helpers
 -------------------------------------------------------
@@ -69,32 +60,6 @@ local function GetEquippedItemInfo(invSlot)
     end
     return C_Item.GetCurrentItemLevel(loc) or 0,
            GetInventoryItemLink("player", invSlot)
-end
-
-local function GetEquippedItemID(invSlot)
-    local loc = ItemLocation:CreateFromEquipmentSlot(invSlot)
-    if not loc or not C_Item.DoesItemExist(loc) then
-        return nil
-    end
-    return C_Item.GetItemID(loc)
-end
-
--- Returns the item's unique-equip limit category (nil if it has none).
-local function GetEquippedItemLimitCategory(invSlot)
-    local id = GetEquippedItemID(invSlot)
-    if not id or not GetItemUniqueness then return nil end
-    return GetItemUniqueness(id)
-end
-
-local function GetWorstOfTwo(slot1, slot2)
-    local ilvl1, link1 = GetEquippedItemInfo(slot1)
-    local ilvl2, link2 = GetEquippedItemInfo(slot2)
-
-    if ilvl1 <= ilvl2 then
-        return slot1, ilvl1, link1
-    else
-        return slot2, ilvl2, link2
-    end
 end
 
 -------------------------------------------------------
@@ -125,9 +90,11 @@ local function TryEquipItem(bag, slot)
     ---------------------------------------------------
     if classID == ITEM_CLASS_WEAPON then return end
     ---------------------------------------------------
-    -- NEVER equip trinkets
+    -- NEVER equip trinkets or rings
+    -- (rings excluded: unique-equipped duplicates with the same name but
+    -- different itemIDs made the addon swap them back and forth forever)
     ---------------------------------------------------
-    if equipLoc == "INVTYPE_TRINKET" then return end
+    if equipLoc == "INVTYPE_TRINKET" or equipLoc == "INVTYPE_FINGER" then return end
 
     ---------------------------------------------------
     -- Armor type enforcement (ONLY real armor slots)
@@ -156,44 +123,11 @@ local function TryEquipItem(bag, slot)
     ---------------------------------------------------
     -- Target slot resolution
     ---------------------------------------------------
-    local targetInvSlot, equippedIlvl, replacedLink
+    local slotName = INVTYPE_TO_SLOT[equipLoc]
+    if not slotName then return end
 
-    local pair = TWO_SLOT_INVTYPES[equipLoc]
-    if pair then
-        targetInvSlot, equippedIlvl, replacedLink =
-            GetWorstOfTwo(pair[1], pair[2])
-
-        -- Unique-equipped items (e.g. many event rings) can only be worn
-        -- once, even across the two ring slots, and even when different
-        -- copies use different itemIDs that share the same limit category
-        -- (common for satchel/leveling rewards with the same name). If a
-        -- member of that family is already equipped, retarget the equip to
-        -- that exact slot (upgrade in place) instead of the other slot -
-        -- equipping into the other slot would make WoW un-equip the worn
-        -- copy instead, so the two-slot logic would swap forever.
-        if GetItemUniqueness then
-            local limitCategory, limitMax = GetItemUniqueness(itemID)
-            if limitCategory and limitMax == 1 then
-                local worn
-                if GetEquippedItemLimitCategory(pair[1]) == limitCategory then
-                    worn = pair[1]
-                elseif GetEquippedItemLimitCategory(pair[2]) == limitCategory then
-                    worn = pair[2]
-                end
-                if worn and targetInvSlot ~= worn then
-                    targetInvSlot = worn
-                    equippedIlvl, replacedLink = GetEquippedItemInfo(worn)
-                end
-            end
-        end
-
-    else
-        local slotName = INVTYPE_TO_SLOT[equipLoc]
-        if not slotName then return end
-
-        targetInvSlot = GetInventorySlotInfo(slotName)
-        equippedIlvl, replacedLink = GetEquippedItemInfo(targetInvSlot)
-    end
+    local targetInvSlot = GetInventorySlotInfo(slotName)
+    local equippedIlvl, replacedLink = GetEquippedItemInfo(targetInvSlot)
 
     if not targetInvSlot or newIlvl <= equippedIlvl then return end
 
