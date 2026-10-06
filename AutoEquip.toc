@@ -1,5 +1,6 @@
 ## Category: Utils by Naeriam
 ## Interface: 120100
+## X-Curse-Project-ID: 1409753
 ## Title: Auto |cFF8B008BEquip|r
 ## Author: Velhari-LosErrantes EU
 ## Version: 0.4
