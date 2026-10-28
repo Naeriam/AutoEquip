@@ -6,6 +6,16 @@ local f = CreateFrame("Frame")
 local pendingScan = false
 local bankOpen = false
 local bankCooldownUntil = 0
+local scanReadyAt = 0      -- no scans before this time (login grace period)
+local scanTimer = nil      -- debounce timer for scan requests
+local scanBag, scanSlot = nil, nil -- progress of the scan in course
+
+-------------------------------------------------------
+-- Tuning
+-------------------------------------------------------
+local LOGIN_DELAY     = 5   -- seconds to wait after login / reload
+local SCAN_DEBOUNCE   = 0.5 -- seconds to group consecutive bag updates
+local SLOTS_PER_FRAME = 8   -- bag slots checked per frame
 
 -------------------------------------------------------
 -- Stable item class IDs
@@ -81,7 +91,7 @@ local function TryEquipItem(bag, slot)
     if not link then return end
 
     local _, _, _, equipLoc, _, classID, subClassID =
-        GetItemInfoInstant(itemID)
+        C_Item.GetItemInfoInstant(itemID)
 
     if not equipLoc or equipLoc == "" then return end
 
@@ -155,37 +165,85 @@ local function TryEquipItem(bag, slot)
 end
 
 -------------------------------------------------------
--- Bag scan
+-- Bag scan (spread over several frames to avoid hitches)
 -------------------------------------------------------
+local function CanScan()
+    return not InCombatLockdown() and not bankOpen
+        and GetTime() >= bankCooldownUntil
+end
+
+local function StopScan()
+    scanBag, scanSlot = nil, nil
+    f:SetScript("OnUpdate", nil)
+end
+
+local function ScanStep()
+    if not CanScan() then
+        pendingScan = true
+        StopScan()
+        return
+    end
+
+    local budget = SLOTS_PER_FRAME
+    while budget > 0 do
+        if scanSlot > GetContainerNumSlots(scanBag) then
+            scanBag, scanSlot = scanBag + 1, 1
+            if scanBag > NUM_BAG_SLOTS then
+                StopScan()
+                return
+            end
+        else
+            TryEquipItem(scanBag, scanSlot)
+            scanSlot = scanSlot + 1
+            budget = budget - 1
+        end
+    end
+end
+
 local function ScanBags()
-    if InCombatLockdown() or bankOpen or GetTime() < bankCooldownUntil then
+    if not CanScan() then
         pendingScan = true
         return
     end
 
     pendingScan = false
 
-    for bag = 0, NUM_BAG_SLOTS do
-        for slot = 1, GetContainerNumSlots(bag) do
-            TryEquipItem(bag, slot)
-        end
-    end
+    -- (Re)start from the first bag; a scan in course is restarted
+    scanBag, scanSlot = 0, 1
+    f:SetScript("OnUpdate", ScanStep)
+end
+
+-- Groups bursts of events into a single scan and honours the login delay
+local function RequestScan()
+    if scanTimer then scanTimer:Cancel() end
+    local delay = math.max(SCAN_DEBOUNCE, scanReadyAt - GetTime())
+    scanTimer = C_Timer.NewTimer(delay, function()
+        scanTimer = nil
+        ScanBags()
+    end)
 end
 
 -------------------------------------------------------
 -- Events
 -------------------------------------------------------
+f:RegisterEvent("PLAYER_ENTERING_WORLD")
 f:RegisterEvent("BAG_UPDATE_DELAYED")
 f:RegisterEvent("PLAYER_REGEN_ENABLED")
 f:RegisterEvent("BANKFRAME_OPENED")
 f:RegisterEvent("BANKFRAME_CLOSED")
 
-f:SetScript("OnEvent", function(_, event)
-    if event == "BAG_UPDATE_DELAYED" then
-        ScanBags()
+f:SetScript("OnEvent", function(_, event, isInitialLogin, isReloadingUi)
+    if event == "PLAYER_ENTERING_WORLD" then
+        if isInitialLogin or isReloadingUi then
+            scanReadyAt = GetTime() + LOGIN_DELAY
+            RequestScan()
+        end
+
+    elseif event == "BAG_UPDATE_DELAYED" then
+        RequestScan()
 
     elseif event == "PLAYER_REGEN_ENABLED" and pendingScan then
-        ScanBags()
+        RequestScan()
 
     elseif event == "BANKFRAME_OPENED" then
         bankOpen = true
