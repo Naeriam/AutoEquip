@@ -3,7 +3,7 @@
 ## X-Curse-Project-ID: 1409753
 ## Title: Auto |cFF8B008BEquip|r
 ## Author: Velhari-LosErrantes EU
-## Version: 0.5
+## Version: 0.6
 ## IconTexture: Interface\Icons\inv_misc_curiouscoin
 ## Notes: Auto-equip items with higher item level
 

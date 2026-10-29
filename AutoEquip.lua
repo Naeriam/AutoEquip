@@ -4,8 +4,7 @@ local f = CreateFrame("Frame")
 -- State
 -------------------------------------------------------
 local pendingScan = false
-local bankOpen = false
-local bankCooldownUntil = 0
+local interactionCooldownUntil = 0
 local scanReadyAt = 0      -- no scans before this time (login grace period)
 local scanTimer = nil      -- debounce timer for scan requests
 local scanBag, scanSlot = nil, nil -- progress of the scan in course
@@ -16,6 +15,7 @@ local scanBag, scanSlot = nil, nil -- progress of the scan in course
 local LOGIN_DELAY     = 5   -- seconds to wait after login / reload
 local SCAN_DEBOUNCE   = 0.5 -- seconds to group consecutive bag updates
 local SLOTS_PER_FRAME = 8   -- bag slots checked per frame
+local INTERACTION_COOLDOWN = 1.2 -- seconds to wait after closing a window
 
 -------------------------------------------------------
 -- Stable item class IDs
@@ -28,7 +28,9 @@ local ITEM_CLASS_ARMOR  = 4
 -------------------------------------------------------
 local GetContainerItemLink = C_Container.GetContainerItemLink
 local GetContainerNumSlots = C_Container.GetContainerNumSlots
-local UseContainerItem    = C_Container.UseContainerItem
+-- Never use C_Container.UseContainerItem to equip: with a vendor, mail,
+-- trade or bank window open it sells / attaches / deposits the item instead
+local EquipItemByName      = C_Item.EquipItemByName or EquipItemByName
 
 -------------------------------------------------------
 -- Armor type per class
@@ -63,6 +65,34 @@ local REQUIRED_ARMOR = CLASS_ARMOR_ID[playerClass]
 -------------------------------------------------------
 -- Helpers
 -------------------------------------------------------
+-- Frames where clicking a bag item does something other than equip it
+local INTERACTION_FRAMES = {
+    "MerchantFrame", "MailFrame", "SendMailFrame", "TradeFrame",
+    "AuctionHouseFrame", "BankFrame", "AccountBankPanel", "GuildBankFrame",
+    "ScrappingMachineFrame", "VoidStorageFrame", "ItemUpgradeFrame",
+    "ItemSocketingFrame", "ItemInteractionFrame",
+}
+
+-- Returns why equipping is not allowed right now, or nil if it is
+local function GetBlockReason()
+    if InCombatLockdown() then return "in combat" end
+
+    for _, name in ipairs(INTERACTION_FRAMES) do
+        local frame = _G[name]
+        -- IsVisible, not IsShown: child panels keep their shown flag
+        -- while the parent window is closed
+        if frame and frame:IsVisible() then return name .. " open" end
+    end
+
+    if GetTime() < interactionCooldownUntil then
+        return "waiting after closing a window"
+    end
+end
+
+local function CanScan()
+    return GetBlockReason() == nil
+end
+
 local function GetEquippedItemInfo(invSlot)
     local loc = ItemLocation:CreateFromEquipmentSlot(invSlot)
     if not loc or not C_Item.DoesItemExist(loc) then
@@ -76,7 +106,7 @@ end
 -- Core logic
 -------------------------------------------------------
 local function TryEquipItem(bag, slot)
-    if bankOpen or GetTime() < bankCooldownUntil then
+    if not CanScan() then
         pendingScan = true
         return
     end
@@ -125,6 +155,13 @@ local function TryEquipItem(bag, slot)
     end
 
     ---------------------------------------------------
+    -- Required level (otherwise the equip fails and is retried forever)
+    ---------------------------------------------------
+    local _, _, _, _, minLevel = C_Item.GetItemInfo(link)
+    if not minLevel then pendingScan = true return end
+    if minLevel > UnitLevel("player") then return end
+
+    ---------------------------------------------------
     -- Item level
     ---------------------------------------------------
     local newIlvl = C_Item.GetCurrentItemLevel(itemLoc)
@@ -153,9 +190,14 @@ local function TryEquipItem(bag, slot)
     end
 
     ---------------------------------------------------
-    -- Equip
+    -- Equip (checked again right before acting)
     ---------------------------------------------------
-    UseContainerItem(bag, slot)
+    if not CanScan() then
+        pendingScan = true
+        return
+    end
+
+    EquipItemByName(link, targetInvSlot)
 
     print(string.format(
         "|cff00ff00[AutoEquip]|r Equipped %s |cffff0000(replaces %s)|r",
@@ -167,11 +209,6 @@ end
 -------------------------------------------------------
 -- Bag scan (spread over several frames to avoid hitches)
 -------------------------------------------------------
-local function CanScan()
-    return not InCombatLockdown() and not bankOpen
-        and GetTime() >= bankCooldownUntil
-end
-
 local function StopScan()
     scanBag, scanSlot = nil, nil
     f:SetScript("OnUpdate", nil)
@@ -229,12 +266,14 @@ end
 f:RegisterEvent("PLAYER_ENTERING_WORLD")
 f:RegisterEvent("BAG_UPDATE_DELAYED")
 f:RegisterEvent("PLAYER_REGEN_ENABLED")
-f:RegisterEvent("BANKFRAME_OPENED")
-f:RegisterEvent("BANKFRAME_CLOSED")
+f:RegisterEvent("PLAYER_INTERACTION_MANAGER_FRAME_SHOW")
+f:RegisterEvent("PLAYER_INTERACTION_MANAGER_FRAME_HIDE")
 
-f:SetScript("OnEvent", function(_, event, isInitialLogin, isReloadingUi)
+f:SetScript("OnEvent", function(_, event, ...)
     if event == "PLAYER_ENTERING_WORLD" then
+        local isInitialLogin, isReloadingUi = ...
         if isInitialLogin or isReloadingUi then
+            print("|cff00ff00[AutoEquip]|r Loaded. Type |cffffff00/autoequip|r to check its status.")
             scanReadyAt = GetTime() + LOGIN_DELAY
             RequestScan()
         end
@@ -245,12 +284,32 @@ f:SetScript("OnEvent", function(_, event, isInitialLogin, isReloadingUi)
     elseif event == "PLAYER_REGEN_ENABLED" and pendingScan then
         RequestScan()
 
-    elseif event == "BANKFRAME_OPENED" then
-        bankOpen = true
-
-    elseif event == "BANKFRAME_CLOSED" then
-        bankOpen = false
-        bankCooldownUntil = GetTime() + 1.2
+    -- Not used to block: some windows (e.g. gossip) never fire the HIDE
+    -- event. Blocking relies on GetBlockReason() checking visible frames.
+    elseif event == "PLAYER_INTERACTION_MANAGER_FRAME_SHOW" then
+        StopScan()
+        if scanTimer then scanTimer:Cancel() scanTimer = nil end
         pendingScan = true
+
+    elseif event == "PLAYER_INTERACTION_MANAGER_FRAME_HIDE" then
+        interactionCooldownUntil = GetTime() + INTERACTION_COOLDOWN
+        if pendingScan then
+            scanReadyAt = math.max(scanReadyAt, interactionCooldownUntil)
+            RequestScan()
+        end
     end
 end)
+
+-------------------------------------------------------
+-- Slash command: shows status and forces a scan
+-------------------------------------------------------
+SLASH_AUTOEQUIP1 = "/autoequip"
+SlashCmdList.AUTOEQUIP = function()
+    local reason = GetBlockReason()
+    if reason then
+        print("|cffffff00[AutoEquip]|r Paused: " .. reason)
+    else
+        print("|cff00ff00[AutoEquip]|r Ready, scanning bags")
+    end
+    ScanBags()
+end
